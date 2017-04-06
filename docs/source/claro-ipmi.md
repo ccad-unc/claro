@@ -128,6 +128,9 @@ The parallelism to use by default can be set in the configuration file
 in the [ipmi] section with the paramenter "parallel". This value is overridden
 by the input from the command line.
 
+Furthermore, the <hostlist> can be replaced by the key word "nodes", defined 
+in the configuration file in the [common] section.
+
 
 # EXAMPLES
 

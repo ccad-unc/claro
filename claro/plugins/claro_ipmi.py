@@ -102,7 +102,11 @@ def ipmi_do(hosts, *cmd):
 
     imm_user = value_from_file(get_from_config("common", "master_passwd_file"), "IMMUSER")
     os.environ["IPMI_PASSWORD"] = value_from_file(get_from_config("common", "master_passwd_file"), "IMMPASSWORD")
-    nodeset = ClusterShell.NodeSet.NodeSet(hosts)
+    if (hosts == "nodes"):
+        nodeset = ClusterShell.NodeSet.NodeSet(get_from_config("common", "nodes"))
+    else:
+        nodeset = ClusterShell.NodeSet.NodeSet(hosts)
+
 
     p = multiprocessing.Pool(parallel)
     result_map = {}
@@ -123,14 +127,20 @@ def ipmi_do(hosts, *cmd):
     p.close()
     p.join()
 
-    for host, result in result_map.items():
+    for host, result in sorted(result_map.items()):
         print host, result.get()
 
 
 def getmac(hosts):
     imm_user = value_from_file(get_from_config("common", "master_passwd_file"), "IMMUSER")
     os.environ["IPMI_PASSWORD"] = value_from_file(get_from_config("common", "master_passwd_file"), "IMMPASSWORD")
-    nodeset = ClusterShell.NodeSet.NodeSet(hosts)
+
+    if (hosts == "nodes"):
+        nodeset = ClusterShell.NodeSet.NodeSet(get_from_config("common", "nodes"))
+    else:
+        nodeset = ClusterShell.NodeSet.NodeSet(hosts)
+
+
     for host in nodeset:
 
         pat = re.compile("\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}")
@@ -140,33 +150,42 @@ def getmac(hosts):
             host = prefix + host + sufix
 
         logging.info("{0}: ".format(host))
-        chassis = get_from_config("ipmi", "chassis")
+        try:
+            chassis = get_from_config("ipmi", "chassis")
+        except:
+            chassis = "standard"
+
 
         if (chassis == 'supermicro'):
             cmd = ["ipmitool", "-I", "lanplus", "-H", host,
                    "-U", imm_user, "-E", "raw", "0x30", "0x21"]
             datainline = 1
-        elif(chassis == 'dell'):
+
+        elif (chassis == 'dell'):
             cmd = ["ipmitool", "-I", "lanplus", "-H", host,
                    "-U", imm_user, "-E", "raw", "0x30", "0x21"]
-        else:
+            datainline = 1
+
+        elif (chassis == 'lenovo'):
             cmd = ["ipmitool", "-I", "lanplus", "-H", host,
                    "-U", imm_user, "-E", "fru", "print", "0"]
-            datainline = 1
+            datainline = 15
+        else:
+            claro_exit("Chassis unknown or not supported")
 
         logging.debug("ipmi/getmac: {0}".format(" ".join(cmd)))
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
         lines = proc.stdout.readlines()
 
-        if (len(lines) < datainline ):
+        if (len(lines) < 1):
 	        claro_exit("The host {0} can't be reached".format(host))
 
-        if (chassis == 'supermicro'):
+        if (chassis == 'supermicro') and (len(lines) == datainline ):
             full_mac = lines[0].upper()
             mac_address1 = full_mac[13:].replace(" ", ":")
             logging.info("eth0's MAC address is {0}".format(mac_address1)) 
             
-        else: 
+        elif (chassis == 'lenovo') and (len(lines) == datainline ): 
             full_mac = lines[14].split(":")[1].strip().upper()
             mac_address1 = "{0}:{1}:{2}:{3}:{4}:{5}".format(full_mac[0:2],
                                                             full_mac[2:4],
@@ -203,45 +222,62 @@ def do_connect_ipmi(host):
 
 
 def do_connect(host, j=False, f=False):
-    nodeset = ClusterShell.NodeSet.NodeSet(host)
+    if (host == "nodes"):
+        nodeset = ClusterShell.NodeSet.NodeSet(get_from_config("common", "nodes"))
+    else:
+        nodeset = ClusterShell.NodeSet.NodeSet(host)
+
     if (len(nodeset) != 1):
         claro_exit('Only one host allowed for this command')
 
     pat = re.compile("\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}")
+
     if pat.match(host):
         logging.debug("The host is an IP adddres: {0}. Using ipmitool without conman.".format(host))
         do_connect_ipmi(host)
     else:
         conmand = get_from_config("ipmi", "conmand")
-        port = int(get_from_config("ipmi", "port"))
         if (len(conmand) == 0):
             claro_exit("You must set the paramenter 'conmand' in the configuration file")
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            s.connect((conmand, port))
-            os.environ["CONMAN_ESCAPE"] = '!'
-
-            cmd = ["conman"]
-            if j:
-                cmd = cmd + ["-j"]
-            if f:
-                cmd = cmd + ["-f"]
-            cmd = cmd + ["-d", conmand, host]
-            run(cmd)
-        except socket.error as e:
-            logging.debug("Conman not running. Message on connect: Errno {0} - {1}".format(e.errno, e.strerror))
+        
+        if (conmand == "None"):
+            logging.debug("Connecting to {0} using ipmitool without conman.".format(host))
             do_connect_ipmi(host)
+        else:
+            port = int(get_from_config("ipmi", "port"))
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                s.connect((conmand, port))
+                os.environ["CONMAN_ESCAPE"] = '!'
 
-        s.close()
+                cmd = ["conman"]
+                if j:
+                    cmd = cmd + ["-j"]
+                if f:
+                    cmd = cmd + ["-f"]
+                cmd = cmd + ["-d", conmand, host]
+                run(cmd)
+            except socket.error as e:
+                logging.debug("Conman not running. Message on connect: Errno {0} - {1}".format(e.errno, e.strerror))
+                do_connect_ipmi(host)
+
+            s.close()
 
 
 def do_ping(hosts):
-    nodes = ClusterShell.NodeSet.NodeSet(hosts)
-    cmd = ["fping", "-r1", "-u", "-s"] + list(nodes)
+    if (hosts == "nodes"):
+        nodeset = ClusterShell.NodeSet.NodeSet(get_from_config("common", "nodes"))
+    else:
+        nodeset = ClusterShell.NodeSet.NodeSet(hosts)
+
+    cmd = ["fping", "-r1", "-u", "-s"] + list(nodeset)
     run(cmd)
 
 
 def do_ssh(hosts, command):
+
+    if (hosts == "nodes"):
+        hosts = get_from_config("common", "nodes")
 
     prefix = get_from_config("ipmi", "prefix")
     sufix = get_from_config("ipmi", "sufix")
@@ -260,6 +296,7 @@ def do_ssh(hosts, command):
     task.set_info("ssh_options", "-oBatchMode=no")
     task.shell(command, nodes=hosts)
     task.resume()
+
 
     for buf, nodes in task.iter_buffers():
         print "---\n%s:\n---\n %s" \
