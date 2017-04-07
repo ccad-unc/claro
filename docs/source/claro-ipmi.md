@@ -152,4 +152,4 @@ And you can check the status of all the nodes using parallelism:
 
 # SEE ALSO
 
-claro(1), claro-images(1), claro-p2p(1), claro-repo(1), claro-slurm(1), claro-enc(1), claro-build(1), claro-virt(1), claro-chroot(1)
+claro(1)
