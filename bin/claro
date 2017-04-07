@@ -58,14 +58,40 @@ import importlib
 import subprocess
 
 from claro.version import __version__
-from claro.utils import claro_exit, conf, initialize_logger
+from claro.utils import claro_exit, conf, initialize_logger 
 
 if __name__ == '__main__':
 
+    forceroot = ""
     args = docopt.docopt(__doc__, version=__version__, options_first=True)
 
+
+    # If we just type 'claro' we get the short help
+    if args['<plugin>'] is None:
+        sys.exit(__doc__)
+
+    # When we type 'claro help' docopt thinks it's a plugin
+    if args['<plugin>'] == 'help':
+        if len(args['<args>']) == 0:
+            subprocess.call(['man', 'claro'])
+        else:
+            page = "claro-{0}".format(args['<args>'][0])
+            subprocess.call(['man', page])
+
+        sys.exit()
+ 
+
+    # Finally we check if it's a claro plugin or show an error message
+    try:
+        m = importlib.import_module('claro.plugins.claro_' + args['<plugin>'])
+    except ImportError:
+        claro_exit("Sorry, the plugin {0} doesn't exist. "
+                 "See 'claro --help'.".format(args['<plugin>']))
+
+
+
     # if you are not root, launch the script with sudo
-    if os.geteuid() != 0:
+    if os.geteuid() != 0 and args['<plugin>'] in forceroot: 
         os.execvp("sudo", ["sudo"] + sys.argv)
 
     if args['-d'] > 0:
@@ -82,26 +108,6 @@ if __name__ == '__main__':
         else:
             claro_exit("Configuration file '{0}' is not a file!".format(args['--config']))
 
-    # If we just type 'claro' we get the short help
-    if args['<plugin>'] is None:
-        sys.exit(__doc__)
-
-    # When we type 'claro help' docopt thinks it's a plugin
-    if args['<plugin>'] == 'help':
-        if len(args['<args>']) == 0:
-            subprocess.call(['man', 'claro'])
-        else:
-            page = "claro-{0}".format(args['<args>'][0])
-            subprocess.call(['man', page])
-
-        sys.exit()
-
-   # Finally we check if it's a claro plugin or show an error message
-    try:
-        m = importlib.import_module('claro.plugins.claro_' + args['<plugin>'])
-    except ImportError:
-        claro_exit("Sorry, the plugin {0} doesn't exist. "
-                 "See 'claro --help'.".format(args['<plugin>']))
 
     # We remove all the "[options]" since the plugins won't know them
     rarg = []
