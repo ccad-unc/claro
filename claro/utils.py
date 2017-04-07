@@ -40,6 +40,7 @@ import os
 import subprocess
 import ConfigParser
 import sys
+import getpass
 
 import ClusterShell.NodeSet
 import ClusterShell.Task
@@ -80,13 +81,16 @@ def run(cmd):
         claro_exit(' '.join(cmd))
 
 
-def get_from_config(section, value, dist=''):
+def get_from_config(section, value, dist = '', verbose = True):
     """ Read a value from config.ini and return it"""
     if dist == '':
         try:
             return getconfig().get(section, value).strip()
         except:
-            claro_exit("Value '{0}' not found in the section '{1}'".format(value, section))
+            if verbose:
+                claro_exit("Value '{0}' not found in the section '{1}'".format(value, section))
+            else:
+               pass
 
     elif dist in getconfig().get("common", "allowed_distributions"):
         or_section = section + "-" + dist
@@ -96,14 +100,21 @@ def get_from_config(section, value, dist=''):
             try:
                 return getconfig().get(or_section, value).strip()
             except:
-                claro_exit("Value '{0}' not found in section '{1}'".format(value, section))
+                if verbose:
+                    claro_exit("Value '{0}' not found in section '{1}'".format(value, section))
+                else:
+                    pass 
         else:
             try:
                 return getconfig().get(section, value).strip()
             except:
-                claro_exit("Value '{0}' not found in section '{1}'".format(value, section))
+                if verbose:
+                    claro_exit("Value '{0}' not found in section '{1}'".format(value, section))
+                else:
+                    pass
     else:
-        claro_exit("{0} is not a known distribution".format(dist))
+        if verbose:
+            claro_exit("{0} is not a known distribution".format(dist))
 
 
 def getconfig():
@@ -122,15 +133,24 @@ getconfig.config = None
 def value_from_file(myfile, key):
     """ Read a value from a headless ini file. """
     password = ""
-    with open(myfile, 'r') as hand:
-        for line in hand:
-            if key in line:
-                texto = line.rstrip().split("=")
-                password = texto[1].strip('"').strip("'")
-    if password == "":
-        claro_exit("{0} not found in the file {1}".format(key, myfile))
-    return password
+    if os.access(myfile, os.R_OK): 
+        with open(myfile, 'r') as hand:
+            for line in hand:
+                if key in line:
+                    texto = line.rstrip().split("=")
+                    password = texto[1].strip('"').strip("'")
+        if password == "":
+            claro_exit("{0} not found in the file {1}".format(key, myfile))
+        return password
+    else:
+        claro_exit("{0}: file not accessible".format(myfile))
 
+def get_nodeset(hosts):
+    if (hosts == "nodes"):
+        nodeset = ClusterShell.NodeSet.NodeSet(get_from_config("common", "nodes"))
+    else:
+        nodeset = ClusterShell.NodeSet.NodeSet(hosts)
+    return nodeset 
 
 def initialize_logger(debug):
     output_dir = "/var/log/claro"
@@ -138,8 +158,18 @@ def initialize_logger(debug):
     logger.setLevel(logging.DEBUG)
 
     # Create logs directory if not exist
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    if (not os.path.exists(output_dir)) or (not os.access(output_dir, os.W_OK)):
+        try:
+            os.makedirs(output_dir, 0o1777) 
+        except:
+            output_dir = os.getenv("HOME")+"/.claro/log"
+            if (not os.path.exists(output_dir)):
+                try:
+                    os.makedirs(output_dir)
+                except:
+                    claro_exit("Cannot create the log directory {0}".format(output_dir))
+         
+         
 
     # Create console handler and set level to info or debug, when it's enabled
     handler = logging.StreamHandler()
@@ -153,14 +183,16 @@ def initialize_logger(debug):
     logger.addHandler(handler)
 
     # Create a log file, with everything, handler and set level to debug
-    handler = logging.FileHandler(os.path.join(output_dir, "all.log"), "a")
+    filelog = getpass.getuser() + "_all.log"
+    handler = logging.FileHandler(os.path.join(output_dir, filelog), "a")
     handler.setLevel(logging.DEBUG)
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
     # create error file, with the most important messages, handler and set level to warning
-    handler = logging.FileHandler(os.path.join(output_dir, "important.log"), "a")
+    filelog = getpass.getuser() + "_important.log"
+    handler = logging.FileHandler(os.path.join(output_dir, filelog), "a")
     handler.setLevel(logging.WARNING)
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
     handler.setFormatter(formatter)

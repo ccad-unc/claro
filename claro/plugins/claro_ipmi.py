@@ -84,7 +84,7 @@ import sys
 
 import ClusterShell
 import docopt
-from claro.utils import claro_exit, run, get_from_config, value_from_file
+from claro.utils import claro_exit, run, get_from_config, value_from_file, get_nodeset
 
 
 def ipmi_run(cmd):
@@ -97,15 +97,27 @@ def ipmi_run(cmd):
     else:
         return "OK: " + output
 
+def append_presu(host):
+    pat = re.compile("\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}")
+    if not pat.match(host):
+        prefix = get_from_config("ipmi", "prefix", verbose = False)
+        if prefix is None:
+            prefix = ""
+
+        suffix = get_from_config("ipmi", "suffix", verbose = False)
+        if suffix is None:
+            suffix = ""
+
+        return prefix + host + suffix
+    else:
+        return host
+
 
 def ipmi_do(hosts, *cmd):
 
     imm_user = value_from_file(get_from_config("common", "master_passwd_file"), "IMMUSER")
     os.environ["IPMI_PASSWORD"] = value_from_file(get_from_config("common", "master_passwd_file"), "IMMPASSWORD")
-    if (hosts == "nodes"):
-        nodeset = ClusterShell.NodeSet.NodeSet(get_from_config("common", "nodes"))
-    else:
-        nodeset = ClusterShell.NodeSet.NodeSet(hosts)
+    nodeset = get_nodeset(hosts) 
 
 
     p = multiprocessing.Pool(parallel)
@@ -113,11 +125,7 @@ def ipmi_do(hosts, *cmd):
 
     for host in nodeset:
 
-        pat = re.compile("\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}")
-        if not pat.match(host):
-            prefix = get_from_config("ipmi", "prefix")
-            sufix = get_from_config("ipmi", "sufix")
-            host = prefix + host + sufix
+        host = append_presu(host)
 
         ipmitool = ["ipmitool", "-I", "lanplus", "-H", host, "-U", imm_user, "-E", "-e!"]
         ipmitool.extend(cmd)
@@ -134,20 +142,12 @@ def ipmi_do(hosts, *cmd):
 def getmac(hosts):
     imm_user = value_from_file(get_from_config("common", "master_passwd_file"), "IMMUSER")
     os.environ["IPMI_PASSWORD"] = value_from_file(get_from_config("common", "master_passwd_file"), "IMMPASSWORD")
-
-    if (hosts == "nodes"):
-        nodeset = ClusterShell.NodeSet.NodeSet(get_from_config("common", "nodes"))
-    else:
-        nodeset = ClusterShell.NodeSet.NodeSet(hosts)
+    nodeset = get_nodeset(hosts) 
 
 
     for host in nodeset:
 
-        pat = re.compile("\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}")
-        if not pat.match(host):
-            prefix = get_from_config("ipmi", "prefix")
-            sufix = get_from_config("ipmi", "sufix")
-            host = prefix + host + sufix
+        host = append_presu(host)
 
         logging.info("{0}: ".format(host))
         try:
@@ -211,10 +211,7 @@ def do_connect_ipmi(host):
     os.environ["IPMI_PASSWORD"] = value_from_file(get_from_config("common", "master_passwd_file"), "IMMPASSWORD")
 
     pat = re.compile("\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}")
-    if not pat.match(host):
-        prefix = get_from_config("ipmi", "prefix")
-        sufix = get_from_config("ipmi", "sufix")
-        host = prefix + host + sufix
+    host = append_presu(host)
 
     ipmitool = ["ipmitool", "-I", "lanplus", "-H", host, "-U", imm_user, "-E", "-e!", "sol", "activate"]
     logging.debug("ipmi/ipmi_do: {0}".format(" ".join(ipmitool)))
@@ -222,10 +219,7 @@ def do_connect_ipmi(host):
 
 
 def do_connect(host, j=False, f=False):
-    if (host == "nodes"):
-        nodeset = ClusterShell.NodeSet.NodeSet(get_from_config("common", "nodes"))
-    else:
-        nodeset = ClusterShell.NodeSet.NodeSet(host)
+    nodeset = get_nodeset(host) 
 
     if (len(nodeset) != 1):
         claro_exit('Only one host allowed for this command')
@@ -265,10 +259,7 @@ def do_connect(host, j=False, f=False):
 
 
 def do_ping(hosts):
-    if (hosts == "nodes"):
-        nodeset = ClusterShell.NodeSet.NodeSet(get_from_config("common", "nodes"))
-    else:
-        nodeset = ClusterShell.NodeSet.NodeSet(hosts)
+    nodeset = get_nodeset(hosts) 
 
     cmd = ["fping", "-r1", "-u", "-s"] + list(nodeset)
     run(cmd)
@@ -279,9 +270,7 @@ def do_ssh(hosts, command):
     if (hosts == "nodes"):
         hosts = get_from_config("common", "nodes")
 
-    prefix = get_from_config("ipmi", "prefix")
-    sufix = get_from_config("ipmi", "sufix")
-    hosts = prefix + hosts + sufix
+    hosts = append_presu(hosts)
 
     os.environ["SSHPASS"] = \
         value_from_file(get_from_config("common", "master_passwd_file"),
