@@ -44,7 +44,7 @@ Options:
     -dd                Enable debug output for third party applications
     --config=<file>    Provide a configuration file
 
-Clara provides the following plugins:
+Claro provides the following plugins:
    ipmi     Manages and get the status from the nodes of a cluster.
 
 See 'claro help <plugin>' for detailed help on a plugin
