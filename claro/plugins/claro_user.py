@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 ##############################################################################
-#  Copyright (C) 2014-2016 EDF SA                                            #
 #  Copyright (C) 2017 CONICET                                                #
 #                                                                            #
 #  This file is part of Claro                                                #
@@ -34,89 +33,66 @@
 #                                                                            #
 ##############################################################################
 """
-Usage: claro [-d | -dd] [options] <plugin> [<args>...]
-       claro help <plugin>
-       claro [--version]
-       claro [--help]
+Manages users in a cluster.
 
-Options:
-    -d                 Enable debug output
-    -dd                Enable debug output for third party applications
-    --config=<file>    Provide a configuration file
-
-Claro provides the following plugins:
-   ipmi     Manages and get the status from the nodes of a cluster.
-   user     Manages users in a cluster.
-
-See 'claro help <plugin>' for detailed help on a plugin
-and 'claro <plugin> --help' for a quick list of options of a plugin.
+Usage:
+    claro user check <username> <hostlist>
 """
-import os
+
+#import errno
+#import multiprocessing
+import logging
+#import os
+#import re
+#import socket
+#import subprocess
 import sys
 
+import ClusterShell
 import docopt
-import importlib
-import subprocess
+from claro.utils import get_nodeset
 
-from claro.version import __version__
-from claro.utils import claro_exit, conf, initialize_logger 
+
+
+
+def do_checkuser(username,hosts):
+
+    hosts = get_nodeset(hosts) 
+    hostlist = "" 
+    cmd = "id -u" + " " + username 
+    logging.debug("clush: {0} {1}".format(cmd, hosts))
+
+    chkid = ClusterShell.Task.task_self()
+    chkid.run(cmd, nodes=hosts)
+
+    for output, nodes in chkid.iter_buffers():
+        nodelist = ClusterShell.NodeSet.NodeSet.fromlist(nodes)
+        try:
+            userid = int(str(output))
+            logging.info("User {0} exist in node(s) {1} with id {2}".format(username, nodelist, output))
+            hostlist = hostlist + " " + str(nodelist) 
+        except:
+            logging.info("User {0} doesn't exist in node(s) {1}".format(username, nodelist))
+ 
+    if (len(hostlist) > 0): 
+        cmd = "groups" + " " + username 
+        chkgrp = ClusterShell.Task.task_self() 
+        chkgrp.run(cmd, nodes=hostlist)
+ 
+        for output, nodes in chkgrp.iter_buffers():
+            nodelist = ClusterShell.NodeSet.NodeSet.fromlist(nodes)
+            try: 
+                groups = str(output).split(':')
+                logging.info("In node(s) {0}, user {1} is member of the following groups:{2}".format(nodelist,username,groups[1]))
+            except: 
+                logging.info("In node(s) {0} cannot determine group membership".format(nodelist))
+
+def main():
+    logging.debug(sys.argv)
+    dargs = docopt.docopt(__doc__)
+
+    if dargs['check']:
+        do_checkuser(dargs['<username>'], dargs['<hostlist>'])
 
 if __name__ == '__main__':
-
-    forceroot = ""
-    args = docopt.docopt(__doc__, version=__version__, options_first=True)
-
-
-    # If we just type 'claro' we get the short help
-    if args['<plugin>'] is None:
-        sys.exit(__doc__)
-
-    # When we type 'claro help' docopt thinks it's a plugin
-    if args['<plugin>'] == 'help':
-        if len(args['<args>']) == 0:
-            subprocess.call(['man', 'claro'])
-        else:
-            page = "claro-{0}".format(args['<args>'][0])
-            subprocess.call(['man', page])
-
-        sys.exit()
- 
-
-    # Finally we check if it's a claro plugin or show an error message
-    try:
-        m = importlib.import_module('claro.plugins.claro_' + args['<plugin>'])
-    except ImportError:
-        claro_exit("Sorry, the plugin {0} doesn't exist. "
-                 "See 'claro --help'.".format(args['<plugin>']))
-
-
-
-    # if you are not root, launch the script with sudo
-    if os.geteuid() != 0 and args['<plugin>'] in forceroot: 
-        os.execvp("sudo", ["sudo"] + sys.argv)
-
-    if args['-d'] > 0:
-        conf.debug = True
-
-    if args['-d'] == 2:
-        conf.ddebug = True
-
-    initialize_logger(conf.debug)
-
-    if args['--config']:
-        if os.path.isfile(args['--config']):
-            conf.config = os.path.abspath(args['--config'])
-        else:
-            claro_exit("Configuration file '{0}' is not a file!".format(args['--config']))
-
-
-    # We remove all the "[options]" since the plugins won't know them
-    rarg = []
-    rarg.append(sys.argv[0])
-    for e in range(1, len(sys.argv)):
-        if sys.argv[e] == args['<plugin>']:
-            break
-    rarg = rarg + sys.argv[e:]
-    sys.argv = rarg
-
-    m.main()
+    main()
