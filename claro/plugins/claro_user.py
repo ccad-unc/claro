@@ -36,6 +36,7 @@
 Manages users in a cluster.
 
 Usage:
+    claro user search <keyword>
     claro user info <username>
     claro user check <username> <hostlist>
     claro user add <username> --fullname="<fullname>" --email=<email> --account=<account>
@@ -334,11 +335,24 @@ def do_printuserinfo(username):
         Cluster usage in current year: {7} hours \n""".format(username, userinfo.pw_uid, userinfo.pw_gecos.split(',')[0], userinfo.pw_dir, userinfo.pw_shell, ', '.join(usergroups), ', '.join(accountslist), ''.join(usagelist)))
 
 
+def do_searchinpwd(keyword): 
+
+    keyword = keyword.lower()
+    users = [u.pw_name for u in pwd.getpwall() if keyword in u.pw_name.lower() or keyword in u.pw_gecos.lower()]
+
+    if (len(users) > 0):
+        logging.info("""The following users match your search criteria:\n \t{0}""".format('\n \t'.join(users)))
+    else:
+        logging.info("No user match")
+
+
 def main():
     logging.debug(sys.argv)
     dargs = docopt.docopt(__doc__)
 
-    if dargs['check']:
+    if dargs['search']:
+        do_searchinpwd(dargs['<keyword>'])
+    elif dargs['check']:
         do_checkuser(dargs['<username>'], dargs['<hostlist>'])
     elif dargs['add']:
         do_createuser(dargs['<username>'], dargs['--fullname'], dargs['--email'], dargs['--account'])
