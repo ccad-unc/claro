@@ -66,6 +66,16 @@ def clush(hosts, cmds):
     for output, nodes in task.iter_buffers():
         logging.info("{0} {1}".format(ClusterShell.NodeSet.NodeSet.fromlist(nodes), output))
 
+def clushcp(source, destination, hosts):
+    logging.debug("utils/clushcp: copy {0} on nodes {1} at {2}".format(source,hosts,destination))
+    cpp = ClusterShell.Task.task_self()
+    cpp.copy(nodes=hosts, source=source, dest=destination)
+    cpp.resume()
+    for ret, nodes in cpp.iter_retcodes():
+        if (ret != 0):
+            nodelist = ClusterShell.NodeSet.NodeSet.fromlist(nodes)
+            logging.info("On node(s) {0} cannot copy the file {1}".format(nodelist,source))
+
 
 def run(cmd):
     logging.debug("utils/run: {0}".format(" ".join(cmd)))
