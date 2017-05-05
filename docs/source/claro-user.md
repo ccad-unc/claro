@@ -7,7 +7,7 @@ claro-user - manages users in a cluster
 # SYNOPSIS
 
     claro user check <username> <hostlist>
-    claro user add <username>
+    claro user add <username> --fullname=<fullname> --email=<email> --account=<account>
     claro user del <username> 
     claro user -h | --help
 
@@ -21,6 +21,10 @@ in a cluster.
     claro user check <username> <hostlist>
 
         Check if an user exist in a hostlist
+   
+    claro user add <username> 
+        
+        Create a new user in a cluster
 
 
 For the commands that allow to interact multiple nodes at the same time,

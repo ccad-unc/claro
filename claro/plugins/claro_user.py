@@ -37,24 +37,97 @@ Manages users in a cluster.
 
 Usage:
     claro user check <username> <hostlist>
+    claro user add <username> --fullname="<fullname>" --email=<email> --account=<account>
 """
 
-#import errno
-#import multiprocessing
 import logging
-#import os
-#import re
-#import socket
-#import subprocess
+import os
+import re
+import subprocess
 import sys
-
+import pwd
+import grp 
 import ClusterShell
 import docopt
-from claro.utils import get_nodeset
+from claro.utils import get_nodeset, get_from_config, claro_exit, run, clushcp
 
 
+def validate_email(email):
+
+    match = re.match('^[_a-z0-9-]+(\.[_a-z0-9-]+)*@[a-z0-9-]+(\.[a-z0-9-]+)*(\.[a-z]{2,4})$', email)
+
+    if match == None:
+        claro_exit("This email address: {0}, doesn't have a valid syntax".format(email))
 
 
+def validate_account(account):
+    # sacctmgr returns always 0, for this reason cannot use subprocess.check_call 
+    accountslist = []
+    chkaccount = subprocess.Popen(["sacctmgr", "-n", "-p", "show", "account"],stdout=subprocess.PIPE)
+    for line in chkaccount.stdout:
+        accountslist.append(str(line).split('|')[0])
+
+    if (account not in accountslist):
+        claro_exit("Slurm account {0} doesn't exist in this system".format(account))
+
+def get_confirmation(info,account): 
+    
+    if (len(info) == 11):
+        username = info[10]
+        userid = info[9]
+        usergroups = username 
+    elif (len(info) == 13):
+        username = info[12]
+        userid = info[11]
+        usergroups = username + "," + info[8] 
+    else:
+        return None  
+
+    userhome = info[4] 
+    usershell = info[2] 
+ 
+    logging.info("""A new user will be create with following options:  
+        Username: {0} 
+        User ID: {1}
+        Home directory: {2}
+        Default shel: {3}
+        Groups: {4} 
+        Slurm account: {5} \n""".format(username,userid,userhome,usershell,usergroups,account))
+   
+    answer = raw_input('Please enter "YES" to confirm: ')
+
+    if (str(answer) == "YES"):
+        return True
+    else:
+        return False
+ 
+   
+
+def get_lastid(objet): 
+
+     if (objet == "user"):
+         idrange = get_from_config("user", "uidrange")
+         elements = pwd.getpwall()
+     elif (objet == "group"):
+         idrange = get_from_config("user", "gidrange", verbose = False) or get_from_config("user", "uidrange")
+         elements = grp.getgrall()
+     else:
+         return None 
+
+     idlist = []
+     for e in elements:
+        cruid = int(e[2])
+        if (int(idrange.split(':')[0]) <= cruid <= int(idrange.split(':')[1])):
+            idlist.append(cruid)
+
+     if (len(idlist) > 0):
+        lastid = max(idlist) + 1
+     else:
+        lastid = int(idrange.split(':')[0]) + 1
+
+     return lastid
+
+     
 def do_checkuser(username,hosts):
 
     hosts = get_nodeset(hosts) 
@@ -87,12 +160,153 @@ def do_checkuser(username,hosts):
             except: 
                 logging.info("In node(s) {0} cannot determine group membership".format(nodelist))
 
+def welcome_mail(user, fullname, email, account, usershell, userhome, extragroups):
+    print_mail = get_from_config("user", "print_mail", verbose = False)      
+    send_mail = get_from_config("user", "send_mail", verbose = False)  
+    sender = ""
+
+    if (print_mail == "True"):
+        print_mail = True
+    else:
+        print_mail = False
+
+    if (send_mail == "True"):
+        send_mail = True
+    else:
+        send_mail = False
+
+
+    if (send_mail):
+        smtp_server = get_from_config("user", "smtp_server")
+        sender = get_from_config("user", "mail_sender")
+
+    if (print_mail):
+        logging.info("Printing welcome message")
+    
+    if (print_mail or send_mail):
+        mailtext = ''
+        mail_template = get_from_config("user", "mail_template")  
+        import fileinput
+        message = fileinput.input(mail_template)
+        for line in message:
+            line = line.replace("_USER_",user)
+            line = line.replace("_FULLNAME_",fullname)
+            line = line.replace("_EMAIL_",email)
+            line = line.replace("_ACCOUNT_",account)
+            line = line.replace("_USERSHELL_",usershell)
+            line = line.replace("_USERHOME_",userhome)
+            line = line.replace("_EXTRAGROUPS_",extragroups)
+            line = line.replace("_SENDER_",sender)
+            mailtext += str(line)
+            if (print_mail):
+                print line.rstrip()
+        if (send_mail):
+            import smtplib
+            to = email
+            cc = [sender]
+            toaddrs = [to] + cc 
+            server = smtplib.SMTP(smtp_server)
+            server.sendmail(sender, toaddrs, mailtext)
+            server.quit()
+    else:
+        return False 
+
+def mail_forward(action, userhome, email = "", uid = 0, gid = 0): 
+    
+    forward = userhome + "/.forward"
+    if (action == "write"): 
+        if (uid == 0) or (gid == 0):  
+            logging.info("Cannot write mail address in file: {0}".format(forward))
+            return "" 
+        else: 
+            validate_email(email)
+            f = open(forward, 'w')
+            f.write(email + "\n")
+            f.close()
+            os.chmod(forward, 0o600)
+            os.chown(forward, uid, gid)
+            return email 
+    elif (action == "read"): 
+        f = open(forward, 'r') 
+        usermail = str(f.read().rstrip())
+        f.close()
+        return usermail 
+    else: 
+        return ""           
+
+
+
+
+def do_createuser(user, fullname, email, account):
+    validate_email(email) 
+    validate_account(account) 
+
+    try:
+        pwd.getpwnam(user)
+        claro_exit("User {0} exists on this system".format(user))
+    except KeyError:
+
+        synchro = get_from_config("user", "synchronizer") 
+        if (synchro == "clush"):
+            hosts = get_from_config("common", "nodes") 
+        lastuid = get_lastid("user") 
+        lastgid = get_lastid("group") 
+        usershell = get_from_config("user", "shell", verbose = False) or "/bin/bash"
+        userhome = get_from_config("user", "main_home", verbose = False) or "/home"  
+        extragroups = get_from_config("user", "extra_groups", verbose = False) or ""
+        userhome = userhome + "/" + user 
+        if ( len(extragroups) > 0):
+            cmd = ["/usr/sbin/useradd","-s", str(usershell), "-d", str(userhome), "-g", str(lastgid), "-G", str(extragroups), "-m", "-u", str(lastuid), str(user)] 
+        else:
+            cmd = ["/usr/sbin/useradd","-s", str(usershell), "-d", str(userhome), "-g", str(lastgid), "-m", "-u", str(lastuid), str(user)] 
+
+       
+        if (get_confirmation(cmd,account)):
+            addgrp = ["/usr/sbin/groupadd","-g", str(lastgid), str(user)] 
+            run(addgrp) 
+            run(cmd)
+            cmd = ["/usr/bin/chfn","-f", fullname, user] 
+            run(cmd) 
+            ssh_dir = userhome + "/.ssh"
+            if (not os.path.exists(ssh_dir)):
+                os.makedirs(ssh_dir)
+                os.chmod(ssh_dir, 0o700)
+                autkeys = ssh_dir + "/authorized_keys"
+                open(autkeys, 'w').close()
+                os.chmod(autkeys, 0o600)
+                for f in ssh_dir,autkeys:
+                    os.chown(f, lastuid, lastgid)
+            
+            cmd = ["/usr/bin/sacctmgr","-i", "add","user",user,"DefaultAccount="+account] 
+            run(cmd) 
+            if (synchro == "wwsh"):
+                target = ["passwd", "group"]
+                for c in target:
+                    cmdpwd = ["wwsh", "file", "sync", c] 
+                    logging.info("wwsh: Synchronize file {0}".format(c))
+                    run(cmdpwd) 
+            elif (synchro == "clush"):
+                target = ["/etc/passwd", "/etc/group"]
+                for f in target:
+                   logging.info("clush: copy {0} on nodes {1}".format(f,hosts))
+                   clushcp(f,f,hosts)
+            else:
+                logging.info("Cannot determine the synchronization method")
+
+            mail_forward("write", userhome, email, lastuid, lastgid) 
+            welcome_mail(user, fullname, email, account, usershell, userhome, extragroups)  
+            
+        else:  
+            claro_exit("Process aborted by user, nothing to do") 
+
 def main():
     logging.debug(sys.argv)
     dargs = docopt.docopt(__doc__)
 
     if dargs['check']:
         do_checkuser(dargs['<username>'], dargs['<hostlist>'])
+    elif dargs['add']:
+        do_createuser(dargs['<username>'], dargs['--fullname'], dargs['--email'], dargs['--account'])
 
 if __name__ == '__main__':
     main()
