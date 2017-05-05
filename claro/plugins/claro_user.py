@@ -36,6 +36,7 @@
 Manages users in a cluster.
 
 Usage:
+    claro user info <username>
     claro user check <username> <hostlist>
     claro user add <username> --fullname="<fullname>" --email=<email> --account=<account>
 """
@@ -49,6 +50,7 @@ import pwd
 import grp 
 import ClusterShell
 import docopt
+import time
 from claro.utils import get_nodeset, get_from_config, claro_exit, run, clushcp
 
 
@@ -235,8 +237,6 @@ def mail_forward(action, userhome, email = "", uid = 0, gid = 0):
         return ""           
 
 
-
-
 def do_createuser(user, fullname, email, account):
     validate_email(email) 
     validate_account(account) 
@@ -299,6 +299,41 @@ def do_createuser(user, fullname, email, account):
         else:  
             claro_exit("Process aborted by user, nothing to do") 
 
+
+
+def do_printuserinfo(username): 
+
+    try:
+        userinfo = pwd.getpwnam(username)
+    except KeyError:
+        claro_exit("User {0} does not exist on this system".format(username))
+
+    usergroups = [g.gr_name for g in grp.getgrall() if username in g.gr_mem or username in g.gr_name]
+
+    cmd = ["/usr/bin/sacctmgr","-n", "-p","show","user",username]
+    accountslist = []
+    getaccount = subprocess.Popen(cmd,stdout=subprocess.PIPE)
+    for line in getaccount.stdout:
+        accountslist.append(str(line).split('|')[1])
+
+    start_date = time.strftime("%Y") + "-01-01"
+    end_date = time.strftime("%Y-%m-%d")   
+    cmd = ["sreport", "cluster", "-n", "-t", "Hours", "AccountUtilizationByUser", "--parsable","Users=" + username, "start=" + start_date, "end=" + end_date]
+    usagelist = []
+    getusage = subprocess.Popen(cmd,stdout=subprocess.PIPE)
+    for line in getusage.stdout:
+        usagelist.append(str(line).split('|')[4])
+
+    logging.info("""Information about user {0}:  
+        User ID: {1}
+        Full name: {2}
+        Home directory: {3}
+        Default shel: {4}
+        Groups: {5} 
+        Slurm account: {6} 
+        Cluster usage in current year: {7} hours \n""".format(username, userinfo.pw_uid, userinfo.pw_gecos.split(',')[0], userinfo.pw_dir, userinfo.pw_shell, ', '.join(usergroups), ', '.join(accountslist), ''.join(usagelist)))
+
+
 def main():
     logging.debug(sys.argv)
     dargs = docopt.docopt(__doc__)
@@ -307,6 +342,8 @@ def main():
         do_checkuser(dargs['<username>'], dargs['<hostlist>'])
     elif dargs['add']:
         do_createuser(dargs['<username>'], dargs['--fullname'], dargs['--email'], dargs['--account'])
+    elif dargs['info']:
+        do_printuserinfo(dargs['<username>'])
 
 if __name__ == '__main__':
     main()

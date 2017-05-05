@@ -6,6 +6,7 @@ claro-user - manages users in a cluster
 
 # SYNOPSIS
 
+    claro user info <username>
     claro user check <username> <hostlist>
     claro user add <username> --fullname=<fullname> --email=<email> --account=<account>
     claro user del <username> 
